@@ -16,7 +16,7 @@ jobs:
         with:
           node-version: '22'
 
-      - run: npm install
+      - run: npm install --legacy-peer-deps
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - run: npm run build
