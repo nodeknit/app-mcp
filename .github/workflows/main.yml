@@ -16,6 +16,8 @@ jobs:
           node-version: '22'
 
       - run: npm install
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - run: npm run build
       - run: npm run package:prepare
       - name: Configure GitHub Packages auth

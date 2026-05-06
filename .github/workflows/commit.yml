@@ -20,12 +20,8 @@ jobs:
 
       - name: Install dependencies
         run: npm install
-
-      - name: Build package
-        run: npm run build
-
-      - name: Prepare package contents
-        run: npm run package:prepare
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Configure GitHub Packages auth
         run: |
@@ -36,6 +32,12 @@ jobs:
           EOFNPM
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build package
+        run: npm run build
+
+      - name: Prepare package contents
+        run: npm run package:prepare
 
       - name: Resolve publish version
         run: npm run package:version
