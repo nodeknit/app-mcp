@@ -1,5 +1,8 @@
 {
   "name": "@nodeknit/app-mcp",
+  "appId": "app-mcp",
+  "appName": "App MCP",
+  "description": "MCP server app for NodeKnit.",
   "version": "1.0.0",
   "main": "index.js",
   "type": "module",
