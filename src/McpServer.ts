@@ -4,6 +4,7 @@ import type { IMcpContext, IMcpTool } from "./types";
 
 export class McpServer {
   private tools = new Map<string, IMcpTool>();
+  private groups = new Map<string, { description: string }>();
 
   get size(): number {
     return this.tools.size;
@@ -13,7 +14,13 @@ export class McpServer {
     if (this.tools.has(tool.name)) {
       console.warn(`[McpServer] tool '${tool.name}' already registered, overwriting`);
     }
-    this.tools.set(tool.name, tool);
+    const group = tool.group ?? "general";
+    if (!this.groups.has(group)) {
+      this.groups.set(group, { description: tool.groupDescription ?? "" });
+    } else if (tool.groupDescription && !this.groups.get(group)?.description) {
+      this.groups.set(group, { description: tool.groupDescription });
+    }
+    this.tools.set(tool.name, { ...tool, group, shortDescription: tool.shortDescription ?? shortDescription(tool.description) });
   }
 
   unregister(name: string): void {
@@ -35,9 +42,9 @@ export class McpServer {
 
       if (req.method === "GET" && url === endpoint) {
         const isAdmin = this.checkAdminKey(req);
-        return res.json({
+        const base = {
           protocol: "mcp",
-          version: "1.0",
+          version: "1.1",
           info: {
             auth: {
               type: "api-key",
@@ -48,7 +55,33 @@ export class McpServer {
               status: isAdmin ? "authenticated" : "unauthenticated"
             }
           },
-          tools: this.buildToolList(endpoint, isAdmin)
+          endpoints: {
+            groups: { method: "GET", path: endpoint, description: "Compact tool catalogue. Fetch a group only when its tools are needed." },
+            group: { method: "GET", path: `${endpoint}/group/:group`, description: "Full schemas and call documentation for one group." },
+            call: { method: "POST", path: `${endpoint}/call/:toolName`, description: "Call a tool with a JSON body." },
+            flat: { method: "GET", path: `${endpoint}?flat=1`, description: "Legacy full list of every visible tool and schema." }
+          }
+        };
+        const flat = req.query.flat === "1" || req.query.flat === "true" || req.query.all === "1";
+        return res.json(flat ? { ...base, tools: this.buildToolList(endpoint, isAdmin) } : {
+          ...base,
+          groups: this.buildGroupList(endpoint, isAdmin)
+        });
+      }
+
+      const groupPrefix = `${endpoint}/group/`;
+      if (req.method === "GET" && url.startsWith(groupPrefix)) {
+        const name = decodeURIComponent(url.slice(groupPrefix.length));
+        const isAdmin = this.checkAdminKey(req);
+        const tools = this.visibleTools(isAdmin).filter((tool) => tool.group === name);
+        if (!this.groups.has(name) && tools.length === 0) {
+          return res.status(404).json({ error: `Group '${name}' not found` });
+        }
+        return res.json({
+          protocol: "mcp",
+          version: "1.1",
+          group: { name, description: this.groups.get(name)?.description ?? "", toolCount: tools.length },
+          tools: tools.map((tool) => this.toolDetail(endpoint, tool))
         });
       }
 
@@ -101,19 +134,53 @@ export class McpServer {
     return provided === adminKey;
   }
 
-  private buildToolList(endpoint: string, isAdmin: boolean) {
-    return Array.from(this.tools.values())
-      .filter((tool) => isAdmin || tool.mode === "public")
-      .map((tool) => ({
-        name: tool.name,
-        description: tool.description,
-        mode: tool.mode,
-        schema: tool.inputSchema ?? { type: "object", properties: {} },
-        call: {
-          method: "POST",
-          path: `${endpoint}/call/${tool.name}`,
-          auth: tool.mode === "protected" ? "X-Mcp-Key header or ?mcp_key= required" : "none"
-        }
-      }));
+  private visibleTools(isAdmin: boolean): IMcpTool[] {
+    return Array.from(this.tools.values()).filter((tool) => isAdmin || tool.mode === "public");
   }
+
+  private buildGroupList(endpoint: string, isAdmin: boolean) {
+    const grouped = new Map<string, IMcpTool[]>();
+    for (const tool of this.visibleTools(isAdmin)) {
+      const group = tool.group ?? "general";
+      grouped.set(group, [...(grouped.get(group) ?? []), tool]);
+    }
+    return Array.from(grouped.entries()).map(([name, tools]) => ({
+      name,
+      description: this.groups.get(name)?.description || `Tools: ${tools.map((tool) => tool.name).join(", ")}`,
+      toolCount: tools.length,
+      tools: tools.map((tool) => ({
+        name: tool.name,
+        mode: tool.mode,
+        description: tool.shortDescription ?? shortDescription(tool.description),
+        call: `POST ${endpoint}/call/${tool.name}`
+      })),
+      details: { method: "GET", path: `${endpoint}/group/${encodeURIComponent(name)}` }
+    })).sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  private buildToolList(endpoint: string, isAdmin: boolean) {
+    return this.visibleTools(isAdmin).map((tool) => this.toolDetail(endpoint, tool));
+  }
+
+  private toolDetail(endpoint: string, tool: IMcpTool) {
+    return {
+      name: tool.name,
+      group: tool.group ?? "general",
+      description: tool.description,
+      shortDescription: tool.shortDescription ?? shortDescription(tool.description),
+      mode: tool.mode,
+      schema: tool.inputSchema ?? { type: "object", properties: {} },
+      call: {
+        method: "POST",
+        path: `${endpoint}/call/${tool.name}`,
+        auth: tool.mode === "protected" ? "X-Mcp-Key header or ?mcp_key= required" : "none"
+      }
+    };
+  }
+}
+
+function shortDescription(description: string): string {
+  const firstLine = description.split("\n")[0]?.trim() ?? "";
+  const firstSentence = firstLine.split(/(?<=[.!?])\s/)[0] ?? firstLine;
+  return firstSentence.length > 140 ? `${firstSentence.slice(0, 137)}...` : firstSentence;
 }
